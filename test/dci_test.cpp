@@ -3,6 +3,10 @@
 #include "../core/dci.hpp"
 #include <fstream>
 
+TEST_CASE( "Enter" ) {
+    cout << "Entering test suite\n";
+}
+
 TEST_CASE( "Empty system creation", "[system]") {
     dci::system d;
     REQUIRE( d.samples().size() == 0 );
@@ -106,7 +110,7 @@ TEST_CASE( "System save/load", "[system]" ) {
         for (size_t a = 0; a != d.agents().size(); ++a)
             d[s][a] = (a+s)%2;
     d.save_to_file("test.txt");
-    dci::system e = dci::load_from_file("test.txt");
+    dci::system e = dci::system::load_from_file("test.txt");
     REQUIRE( d == e );
 }
 
@@ -116,7 +120,7 @@ TEST_CASE( "System save/load - multilevel", "[system]" ) {
         for (size_t a = 0; a != d.agents().size(); ++a)
             d[s][a] = (a+s)%16;
     d.save_to_file("test.txt");
-    dci::system e = dci::load_from_file("test.txt");
+    dci::system e = dci::system::load_from_file("test.txt");
     REQUIRE( d == e );
 }
 
@@ -200,6 +204,29 @@ TEST_CASE( "Move constructor and assignment - multilevel", "[system]") {
             REQUIRE( e[s][a] == 15 );    
     REQUIRE( e == f );
     REQUIRE( d == empty );
+
+}
+
+TEST_CASE( "Agent statistics - multilevel", "[system]") {
+    constexpr size_t n_agents = 200;
+    constexpr size_t n_samples = 100;
+    constexpr size_t bits_per_agent = 8;
+    dci::system d(n_agents, n_samples, bits_per_agent);
+    REQUIRE( d.samples().size() == n_samples );
+    REQUIRE( d.agents().size() == n_agents );
+    for (size_t s = 0; s != d.samples().size(); ++s)
+        for (size_t a = 0; a != d.agents().size(); ++a)
+            d[s][a] = s;
+    d.compute_agent_statistics();
+    for (const auto& a : d.agents())
+    {
+
+        REQUIRE( a->pdf().size() == n_samples );
+        for (const auto& item : a->pdf())
+            REQUIRE( item.second == 1 );
+
+    }
+
 }
 
 TEST_CASE( "Agent statistics", "[system]") {
@@ -212,26 +239,13 @@ TEST_CASE( "Agent statistics", "[system]") {
     d.compute_agent_statistics();
     for (const auto& a : d.agents())
     {
-        REQUIRE( a->pdf().bucket_count() == 2 );
         REQUIRE( a->pdf().size() == 1 );
         REQUIRE( a->pdf().begin()->second == 100 );
     }
+
 }
 
-TEST_CASE( "Agent statistics - multilevel", "[system]") {
-    dci::system d(10, 100, 8);
-    REQUIRE( d.samples().size() == 100 );
-    REQUIRE( d.agents().size() == 10 );
-    for (size_t s = 0; s != d.samples().size(); ++s)
-        for (size_t a = 0; a != d.agents().size(); ++a)
-            d[s][a] = s;
-    d.compute_agent_statistics();
-    for (const auto& a : d.agents())
-    {
-
-        //REQUIRE( a->pdf().bucket_count() == 100 );
-        //REQUIRE( a->pdf().size() == 100 );
-        //REQUIRE( a->pdf().begin()->second == 100 );
-
-    }
+TEST_CASE( "Exit" ) {
+    cout << "Leaving test suite...\n";
+    dci::print_allocation_stats(cout);
 }

@@ -86,7 +86,7 @@ namespace dci
         template<> inline bool equal<3>(const reg_type* a, const reg_type* b) 
         { 
             /*write_bits(cout, a, 3 * bits_per_reg) << endl; write_bits(cout, b, 3 * bits_per_reg) << endl << endl;*/ 
-            write_bits(cout, a, 3 * bits_per_reg) << " equal" << endl;
+            //write_bits(cout, a, 3 * bits_per_reg) << " equal" << endl;
             return a[0] == b[0] && a[1] == b[1] && a[2] == b[2]; 
         }
         template<> inline bool equal<4>(const reg_type* a, const reg_type* b) { return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3]; }
@@ -127,7 +127,7 @@ namespace dci
             //write_bits(cout, src, 3 * bits_per_reg) << endl; 
             //write_bits(cout, mask, 3 * bits_per_reg) << endl; 
             dest[0] = src[0] & mask[0]; dest[1] = src[1] & mask[1]; dest[2] = src[2] & mask[2]; 
-            write_bits(cout, dest, 3 * bits_per_reg) << " assign from mask " << endl; 
+            //write_bits(cout, dest, 3 * bits_per_reg) << " assign from mask " << endl; 
         }
         template<> inline void assign_from_mask<4>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] = src[0] & mask[0]; dest[1] = src[1] & mask[1]; dest[2] = src[2] & mask[2]; dest[3] = src[3] & mask[3]; }
 
@@ -192,9 +192,10 @@ namespace dci
     public:
         murmur3_hasher(const size_t& s = 0) : _s(s) { _f = register_utils::murmur3_hash; }
         inline unsigned int operator()(const reg_type* reg) const { 
-            unsigned int hash = _f(reg, _s); 
-            register_utils::write_bits(cout, reg, _s * bits_per_reg) << " -> " << hash << endl;
-            return hash;
+            return _f(reg, _s); 
+            //unsigned int hash = _f(reg, _s); 
+            //register_utils::write_bits(cout, reg, _s * bits_per_reg) << " -> " << hash << endl;
+            //return hash;
         }
     };
 
@@ -293,6 +294,60 @@ namespace dci
         }
     };
 
+    // Struct containing a full cluster/agent register, used for histograms
+    class reg 
+    {
+    public:
+        static size_t n_new;
+        static size_t n_del;
+    private:
+        reg_type* _data;
+        size_t _s;
+        void reset_fields()
+        {
+            _s = 0;
+            _data = nullptr;
+        }
+        void copy_from(const reg_type* data, const size_t& s)
+        {
+            _s = s;
+            if (_s)
+            {
+                _data = new reg_type[_s]; reg::n_new++;
+                memcpy(_data, data, _s * bytes_per_reg);
+            }
+            else
+                _data = nullptr;
+        }
+        void free_data(const bool& reset = false)
+        {
+            if (_s) { delete[] _data; reg::n_del++; }
+            if (reset) reset_fields();
+        }
+        void move_from(reg&& r)
+        {
+            _s = r._s;
+            _data = r._data;
+
+            r.reset_fields();
+        }
+    public:
+        reg() : _data(nullptr), _s(0) { }
+        reg(const reg_type* data, const size_t& s) { copy_from(data, s); }
+
+        reg(const reg& r) { copy_from(r._data, r._s); }
+        inline reg& operator=(const reg& r) { if (this != &r) { free_data(); copy_from(r._data, r._s); } return *this; }
+        reg(reg&& r) { move_from(move(r)); }
+        inline reg& operator=(reg&& r) { if (this != &r) { free_data(); move_from(move(r)); } return *this; }
+
+        inline operator const reg_type*() const { return _data; }
+        inline operator reg_type*() { return _data; }
+
+        friend ostream& operator<<(ostream&, const reg&);
+
+        virtual ~reg() { free_data(); }
+    };
+
     // This class represents a dynamic system, defined by N agents and M samples.
     class system;
 
@@ -300,11 +355,14 @@ namespace dci
     class agent_value;
 
     // This is just a typedef for a categorical distribution
-    template<class hash_func> using hashmap = unordered_map<reg_type*, size_t, hash_func, register_compare>;
+    template<class hash_func> using hashmap = unordered_map<reg, size_t, hash_func, register_compare>;
     using categorical_distribution = hashmap<murmur3_hasher>;
 
     // This class represents a system agent, defined by its bitmask.
     class agent {
+    public:
+        static size_t n_new;
+        static size_t n_del;
     private:
         system* _parent;
         reg_type* _bitmask;
@@ -314,7 +372,7 @@ namespace dci
         agent() : _bitmask(nullptr), _name(), _pdf(), _id(0) { }
         agent(reg_type* agent_bitmask, const string& agent_name, const size_t& id, system* parent_system) : 
             _bitmask(agent_bitmask), _name(agent_name), _parent(parent_system), _pdf(), _id(id)
-        { }
+        { agent::n_new++; }
         void compute_pdf();
     public:
 
@@ -330,7 +388,9 @@ namespace dci
 
         // friend operators
         friend ostream& operator<<(ostream& out, const agent& a);
-        friend istream& operator>>(istream& in, system& sys);    
+        friend istream& operator>>(istream& in, system& sys); 
+
+        virtual ~agent() { if (_parent) agent::n_del++; }   
 
     };
 
@@ -338,11 +398,14 @@ namespace dci
     // except for the pointer to the first reg_type cell of the sequence containing
     // the sample. Data is stored in the parent system object.
     class sample {
+    public:
+        static size_t n_new;
+        static size_t n_del;
     private:
         system* _parent;
         reg_type* _data;
         sample() : _data(nullptr), _parent(nullptr) { }
-        sample(reg_type* sample_data, system* parent_system) : _data(sample_data), _parent(parent_system) { }
+        sample(reg_type* sample_data, system* parent_system) : _data(sample_data), _parent(parent_system) { sample::n_new++; }
     public:
 
         // access agent value in sample
@@ -357,6 +420,8 @@ namespace dci
         friend ostream& operator<<(ostream& out, const sample& s);
         friend istream& operator>>(istream& in, system& sys);
         
+        virtual ~sample() { if (_parent) sample::n_del++; }   
+
     };
 
     // This class holds a (usually) short-lived pointer to an agent's value in a sample.
@@ -381,6 +446,9 @@ namespace dci
     };
 
     class system {
+    public:
+        static size_t n_new;
+        static size_t n_del;
     private:
         vector<sample*> _samples;
         vector<agent*> _agents;
@@ -400,7 +468,9 @@ namespace dci
         }
         void free_data(const bool& reset = false)
         {
-            for (auto& s : _samples) if (s) delete s; for (auto& a : _agents) if (a) delete a; if (_data) delete[] _data; if (_agent_pool) delete[] _agent_pool;
+            for (auto& s : _samples) if (s) delete s; for (auto& a : _agents) if (a) delete a; 
+            if (_data) { delete[] _data; system::n_del++; }
+            if (_agent_pool) delete[] _agent_pool;
             if (reset) reset_fields();
         }
         void allocate_data(const size_t& N, const size_t& M, const size_t& NB) 
@@ -420,7 +490,7 @@ namespace dci
                 return;
             }
 
-            _data = new reg_type[_props.data_bytes];
+            _data = new reg_type[_props.data_bytes]; system::n_new++;
             _agent_pool = new reg_type[_props.agent_pool_bytes];
 
             // reset memory
@@ -453,7 +523,7 @@ namespace dci
 
             s.reset_fields();
         }
-        size_t get_max_values(const size_t& nbits)
+        size_t get_max_values(const size_t& nbits) const
         {
             if (nbits > sizeof(size_t) * 8 || (1 << nbits) > _props.M) return _props.M;
             return 1 << nbits;
@@ -567,6 +637,19 @@ namespace dci
             for (auto& a : _agents) a->compute_pdf();
         }
 
+        //
+        // System factories
+        //
+
+        // load from file
+        static system load_from_file(const string& file_path)
+        {
+            ifstream in(file_path);
+            system s;
+            in >> s;
+            return s;
+        }
+
         virtual ~system() { free_data(); }
     };
     
@@ -643,7 +726,8 @@ namespace dci
         for (const auto& s : _parent->_samples)
         {
             _parent->_assign_from_mask(buf, s->_data, _bitmask);
-            _pdf[buf]++;
+            reg temp(buf, _parent->_props.S);
+            _pdf[temp]++;
         }
         delete[] buf;
     }
@@ -709,8 +793,7 @@ namespace dci
         {
             // create agent pointing to corresponding agent pool position
             reg_type* cur_agent = s._agent_pool + a * s._props.S;
-            s._agents[a] = new agent(cur_agent, string(1, '0' + a), a, &s);
-
+            
             // set bits in agent bitmask
             if (offset)
                 register_utils::set_bits_from_string((s._agents[a])->_bitmask, lines[a + 1]);
@@ -720,25 +803,40 @@ namespace dci
 
         // build sample pool
         for (size_t i = 0; i != s._props.M; ++i)
-        {
-            s._samples[i] = new sample(s._data + i * s._props.S, &s);
             register_utils::set_bits_from_string((s._samples[i])->_data, lines[i + offset]);
-        }
 
         return in;
     }
 
-    //
-    // System factories
-    //
+    // memory leak detector helpers
+    size_t reg::n_new = 0;
+    size_t reg::n_del = 0;
+    size_t system::n_new = 0;
+    size_t system::n_del = 0;
+    size_t agent::n_new = 0;
+    size_t agent::n_del = 0;
+    size_t sample::n_new = 0;
+    size_t sample::n_del = 0;
 
-    // load from file
-    system load_from_file(const string& file_path)
+    ostream& print_allocation_stats(ostream& out)
     {
-        ifstream in(file_path);
-        system s;
-        in >> s;
-        return s;
+        out << "reg class performed " << dci::reg::n_new << " new[] and " << dci::reg::n_del << " delete[] statements\n";
+        out << "system class performed " << dci::system::n_new << " new[] and " << dci::system::n_del << " delete[] statements\n";
+        out << "agent class performed " << dci::agent::n_new << " new and " << dci::agent::n_del << " delete statements\n";
+        out << "sample class performed " << dci::sample::n_new << " new and " << dci::sample::n_del << " delete statements\n"; 
+        return out;
+    }
+
+    // miscellaneous operators
+    ostream& operator<<(ostream& out, const reg& r)
+    {
+        return register_utils::write_bits(out, r._data, r._s * bits_per_reg);
+    }
+
+    ostream& operator<<(ostream& out, const categorical_distribution& pdf)
+    {
+        for(const auto& item : pdf) out << item.first << " -> " << item.second << endl;
+            return out;
     }
 
 }
