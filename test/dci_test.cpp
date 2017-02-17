@@ -207,6 +207,23 @@ TEST_CASE( "Move constructor and assignment - multilevel", "[system]") {
 
 }
 
+TEST_CASE( "Agent statistics", "[system]") {
+    dci::system d(10, 100);
+    REQUIRE( d.samples().size() == 100 );
+    REQUIRE( d.agents().size() == 10 );
+    for (size_t s = 0; s != d.samples().size(); ++s)
+        for (size_t a = 0; a != d.agents().size(); ++a)
+            d[s][a] = a % 2;
+    d.compute_agent_statistics();
+    for (const auto& a : d.agents())
+    {
+        REQUIRE( a->pdf().size() == 1 );
+        REQUIRE( a->pdf().begin()->second == 100 );
+        REQUIRE( a->entropy() == Approx(0.0) );
+    }
+
+}
+
 TEST_CASE( "Agent statistics - multilevel", "[system]") {
     constexpr size_t n_agents = 200;
     constexpr size_t n_samples = 100;
@@ -224,24 +241,47 @@ TEST_CASE( "Agent statistics - multilevel", "[system]") {
         REQUIRE( a->pdf().size() == n_samples );
         for (const auto& item : a->pdf())
             REQUIRE( item.second == 1 );
-
+        REQUIRE( a->entropy() == Approx(std::log2((dci::fp_type)n_samples)) );
     }
 
 }
 
-TEST_CASE( "Agent statistics", "[system]") {
+TEST_CASE( "Homogeneous system", "[system]" ) {
     dci::system d(10, 100);
-    REQUIRE( d.samples().size() == 100 );
-    REQUIRE( d.agents().size() == 10 );
     for (size_t s = 0; s != d.samples().size(); ++s)
         for (size_t a = 0; a != d.agents().size(); ++a)
             d[s][a] = a % 2;
     d.compute_agent_statistics();
-    for (const auto& a : d.agents())
-    {
-        REQUIRE( a->pdf().size() == 1 );
-        REQUIRE( a->pdf().begin()->second == 100 );
-    }
+    
+    dci::system hs1 = d.generate_homogeneous_system(123456); 
+    dci::system hs2 = d.generate_homogeneous_system(654321); 
+    REQUIRE( d == hs1 );
+    REQUIRE( d == hs2 );
+
+}
+
+TEST_CASE( "Homogeneous system - multilevel", "[system]" ) {
+    constexpr size_t n_agents = 200;
+    constexpr size_t n_samples = 100;
+    constexpr size_t bits_per_agent = 8;
+    dci::system d(n_agents, n_samples, bits_per_agent);
+    for (size_t s = 0; s != d.samples().size(); ++s)
+        for (size_t a = 0; a != d.agents().size(); ++a)
+            d[s][a] = s;
+    d.compute_agent_statistics();
+    
+    dci::system hs1 = d.generate_homogeneous_system(123456); 
+    dci::system hs2 = d.generate_homogeneous_system(654321); 
+    REQUIRE( hs1.samples().size() == n_samples );
+    REQUIRE( hs1.agents().size() == n_agents );
+    REQUIRE( hs2.samples().size() == n_samples );
+    REQUIRE( hs2.agents().size() == n_agents );
+
+    hs1.compute_agent_statistics();
+    for (const auto& a : hs1.agents())
+        cout << a->id() << " -> " << a->entropy() << endl;
+
+    REQUIRE( hs1 != hs2 );
 
 }
 

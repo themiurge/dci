@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <utility>
 #include <unordered_map>
+#include <cmath>
+#include <random>
 
 using namespace std;
 
@@ -19,6 +21,9 @@ namespace dci
     constexpr reg_type selection_mask = 1;
     constexpr reg_type zero_mask = 0;
     constexpr reg_type one_mask = ~zero_mask;
+
+    // Floating point operations type definition
+    typedef float fp_type;
 
     // Register utilities
     namespace register_utils 
@@ -109,6 +114,38 @@ namespace dci
         template<> inline void assign<4>(reg_type* dest, const reg_type* src) { dest[0] = src[0]; dest[1] = src[1]; dest[2] = src[2]; dest[3] = src[3]; }
 
         //
+        // template, template specializations and general function for combination (bitwise or)
+        //
+        inline void combine(reg_type* dest, const reg_type* src, const size_t& S)
+        {
+            for (size_t i = 0; i != S; ++i) dest[i] |= src[i];
+        }
+        template<size_t S> inline void combine(reg_type* dest, const reg_type* src)
+        {
+            combine(dest, src, S);
+        }
+        template<> inline void combine<1>(reg_type* dest, const reg_type* src) { dest[0] |= src[0]; }
+        template<> inline void combine<2>(reg_type* dest, const reg_type* src) { dest[0] |= src[0]; dest[1] |= src[1]; }
+        template<> inline void combine<3>(reg_type* dest, const reg_type* src) { dest[0] |= src[0]; dest[1] |= src[1]; dest[2] |= src[2]; }
+        template<> inline void combine<4>(reg_type* dest, const reg_type* src) { dest[0] |= src[0]; dest[1] |= src[1]; dest[2] |= src[2]; dest[3] |= src[3]; }
+
+        //
+        // template, template specializations and general function for mask-limited assignment
+        //
+        inline void assign_in_mask(reg_type* dest, const reg_type* src, const reg_type* mask, const size_t& S)
+        {
+            for (size_t i = 0; i != S; ++i) dest[i] = (dest[i] & ~mask[i]) | src[i];
+        }
+        template<size_t S> inline void assign_in_mask(reg_type* dest, const reg_type* src, const reg_type* mask)
+        {
+            assign_in_mask(dest, src, mask, S);
+        }
+        template<> inline void assign_in_mask<1>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] = (dest[0] & ~mask[0]) | src[0]; }
+        template<> inline void assign_in_mask<2>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] = (dest[0] & ~mask[0]) | src[0]; dest[1] = (dest[1] & ~mask[1]) | src[1]; }
+        template<> inline void assign_in_mask<3>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] = (dest[0] & ~mask[0]) | src[0]; dest[1] = (dest[1] & ~mask[1]) | src[1]; dest[2] = (dest[2] & ~mask[2]) | src[2]; }
+        template<> inline void assign_in_mask<4>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] = (dest[0] & ~mask[0]) | src[0]; dest[1] = (dest[1] & ~mask[1]) | src[1]; dest[2] = (dest[2] & ~mask[2]) | src[2]; dest[3] = (dest[3] & ~mask[3]) | src[3]; }
+
+        //
         // template, template specializations and general function for mask assignment
         //
         inline void assign_from_mask(reg_type* dest, const reg_type* src, const reg_type* mask, const size_t& S)
@@ -121,15 +158,24 @@ namespace dci
         }
         template<> inline void assign_from_mask<1>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] = src[0] & mask[0]; }
         template<> inline void assign_from_mask<2>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] = src[0] & mask[0]; dest[1] = src[1] & mask[1]; }
-        template<> inline void assign_from_mask<3>(reg_type* dest, const reg_type* src, const reg_type* mask) 
-        { 
-            
-            //write_bits(cout, src, 3 * bits_per_reg) << endl; 
-            //write_bits(cout, mask, 3 * bits_per_reg) << endl; 
-            dest[0] = src[0] & mask[0]; dest[1] = src[1] & mask[1]; dest[2] = src[2] & mask[2]; 
-            //write_bits(cout, dest, 3 * bits_per_reg) << " assign from mask " << endl; 
-        }
+        template<> inline void assign_from_mask<3>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] = src[0] & mask[0]; dest[1] = src[1] & mask[1]; dest[2] = src[2] & mask[2]; }
         template<> inline void assign_from_mask<4>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] = src[0] & mask[0]; dest[1] = src[1] & mask[1]; dest[2] = src[2] & mask[2]; dest[3] = src[3] & mask[3]; }
+
+        //
+        // template, template specializations and general function for mask combination
+        //
+        inline void combine_from_mask(reg_type* dest, const reg_type* src, const reg_type* mask, const size_t& S)
+        {
+            for (size_t i = 0; i != S; ++i) dest[i] |= src[i] & mask[i];
+        }
+        template<size_t S> inline void combine_from_mask(reg_type* dest, const reg_type* src, const reg_type* mask)
+        {
+            combine_from_mask(dest, src, mask, S);
+        }
+        template<> inline void combine_from_mask<1>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] |= src[0] & mask[0]; }
+        template<> inline void combine_from_mask<2>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] |= src[0] & mask[0]; dest[1] |= src[1] & mask[1]; }
+        template<> inline void combine_from_mask<3>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] |= src[0] & mask[0]; dest[1] |= src[1] & mask[1]; dest[2] |= src[2] & mask[2]; }
+        template<> inline void combine_from_mask<4>(reg_type* dest, const reg_type* src, const reg_type* mask) { dest[0] |= src[0] & mask[0]; dest[1] |= src[1] & mask[1]; dest[2] |= src[2] & mask[2]; dest[3] |= src[3] & mask[3]; }
 
         //
         // hashing functions
@@ -253,6 +299,28 @@ namespace dci
         inline void operator()(reg_type* a, const reg_type* b) const { _f(a, b, _s); }
     };
 
+    // Class for register combination
+    class register_combine {
+    private:
+        size_t _s;
+        void (*_f)(reg_type*, const reg_type*, const size_t&);
+        template<size_t S> inline static void _wrapper(reg_type* a, const reg_type* b, const size_t& s) { register_utils::combine<S>(a, b); }
+    public:
+        register_combine(const size_t& s = 0) : _s(s)
+        { 
+            // use template specializations for small values of S
+            switch (s)
+            {
+                case 1: _f = _wrapper<1>; break;
+                case 2: _f = _wrapper<2>; break;
+                case 3: _f = _wrapper<3>; break;
+                case 4: _f = _wrapper<4>; break;
+                default: _f = register_utils::combine; break;
+            }
+        }
+        inline void operator()(reg_type* a, const reg_type* b) const { _f(a, b, _s); }
+    };
+
     // Class for register mask assignment
     class register_assign_from_mask {
     private:
@@ -270,6 +338,50 @@ namespace dci
                 case 3: _f = _wrapper<3>; break;
                 case 4: _f = _wrapper<4>; break;
                 default: _f = register_utils::assign_from_mask; break;
+            }
+        }
+        inline void operator()(reg_type* a, const reg_type* b, const reg_type* mask) const { _f(a, b, mask, _s); }
+    };
+
+    // Class for register mask-delimited assignment
+    class register_assign_in_mask {
+    private:
+        size_t _s;
+        void (*_f)(reg_type*, const reg_type*, const reg_type*, const size_t&);
+        template<size_t S> inline static void _wrapper(reg_type* a, const reg_type* b, const reg_type* mask, const size_t& s) { register_utils::assign_in_mask<S>(a, b, mask); }
+    public:
+        register_assign_in_mask(const size_t& s = 0) : _s(s)
+        { 
+            // use template specializations for small values of S
+            switch (s)
+            {
+                case 1: _f = _wrapper<1>; break;
+                case 2: _f = _wrapper<2>; break;
+                case 3: _f = _wrapper<3>; break;
+                case 4: _f = _wrapper<4>; break;
+                default: _f = register_utils::assign_in_mask; break;
+            }
+        }
+        inline void operator()(reg_type* a, const reg_type* b, const reg_type* mask) const { _f(a, b, mask, _s); }
+    };
+
+    // Class for register mask combination
+    class register_combine_from_mask {
+    private:
+        size_t _s;
+        void (*_f)(reg_type*, const reg_type*, const reg_type*, const size_t&);
+        template<size_t S> inline static void _wrapper(reg_type* a, const reg_type* b, const reg_type* mask, const size_t& s) { register_utils::combine_from_mask<S>(a, b, mask); }
+    public:
+        register_combine_from_mask(const size_t& s = 0) : _s(s)
+        { 
+            // use template specializations for small values of S
+            switch (s)
+            {
+                case 1: _f = _wrapper<1>; break;
+                case 2: _f = _wrapper<2>; break;
+                case 3: _f = _wrapper<3>; break;
+                case 4: _f = _wrapper<4>; break;
+                default: _f = register_utils::combine_from_mask; break;
             }
         }
         inline void operator()(reg_type* a, const reg_type* b, const reg_type* mask) const { _f(a, b, mask, _s); }
@@ -354,9 +466,30 @@ namespace dci
     // This class holds a short-lived agent value inside a sample
     class agent_value;
 
+    // This class represents a group of agents
+    class cluster;
+
     // This is just a typedef for a categorical distribution
     template<class hash_func> using hashmap = unordered_map<reg, size_t, hash_func, register_compare>;
     using categorical_distribution = hashmap<murmur3_hasher>;
+
+    // Template function used to compute entropy over a histogram
+    template<class hash_func> 
+    fp_type entropy(const hashmap<hash_func>& histogram, const size_t& tot)
+    {
+        if (!tot) return 0.0;
+        fp_type ent = 0.0;
+        for (const auto& elem : histogram)
+            if (elem.second) 
+            {
+                fp_type freq = (fp_type)(elem.second) / (fp_type)tot;
+                ent -= freq * log2(freq);
+            }
+        return ent;
+    }
+
+    // Template function used to compute a histogram
+    template<class hash_func> hashmap<hash_func> compute_histogram(const system&, const reg_type*, const hash_func&);
 
     // This class represents a system agent, defined by its bitmask.
     class agent {
@@ -378,13 +511,15 @@ namespace dci
 
         inline const string& name() const { return _name; }
         inline const size_t& id() const { return _id; }
-        inline const categorical_distribution& pdf() { return _pdf; }
+        inline const categorical_distribution& pdf() const { return _pdf; }
+        fp_type entropy() const;
         size_t size() const;
 
         // friend classes
         friend class system;
         friend class sample; 
         friend class agent_value;   
+        friend class cluster;   
 
         // friend operators
         friend ostream& operator<<(ostream& out, const agent& a);
@@ -394,7 +529,7 @@ namespace dci
 
     };
 
-    // This class representa a single system sample. No data is actually stored here
+    // This class represents a single system sample. No data is actually stored here
     // except for the pointer to the first reg_type cell of the sequence containing
     // the sample. Data is stored in the parent system object.
     class sample {
@@ -415,6 +550,10 @@ namespace dci
         friend class system;
         friend class agent;
         friend class agent_value;
+        friend class cluster;   
+
+        // friend template functions
+        template<class hash_func> friend hashmap<hash_func> compute_histogram(const system&, const reg_type*, const hash_func&);
 
         // friend operators
         friend ostream& operator<<(ostream& out, const sample& s);
@@ -432,6 +571,7 @@ namespace dci
         agent_value(sample* s, agent* a) : _s(s), _a(a) { }
         bool compare_bits(const reg_type* t) const;
         void set_from_bits(const reg_type* t);
+        void set_from_sample_value(const reg_type* t);
     public:
 
         // NOTE: these operators assume that agent size in bits <= bits_per_reg
@@ -442,6 +582,12 @@ namespace dci
         friend class agent;
         friend class sample;
         friend class system;
+        friend class cluster;   
+
+    };
+
+    class cluster {
+    private:
 
     };
 
@@ -458,6 +604,9 @@ namespace dci
         register_compare _equal;
         register_assign _assign;
         register_assign_from_mask _assign_from_mask;
+        register_assign_in_mask _assign_in_mask;
+        register_combine _combine;
+        register_combine_from_mask _combine_from_mask;
         inline void reset_fields()
         {
             _samples.resize(0);
@@ -481,6 +630,9 @@ namespace dci
             _equal = register_compare(_props.S);
             _assign = register_assign(_props.S);
             _assign_from_mask = register_assign_from_mask(_props.S);
+            _assign_in_mask = register_assign_in_mask(_props.S);
+            _combine = register_combine(_props.S);
+            _combine_from_mask = register_combine_from_mask(_props.S);
             
             // empty system
             if (!_props.N)
@@ -585,6 +737,10 @@ namespace dci
         friend class sample;
         friend class agent;
         friend class agent_value;
+        friend class cluster;   
+
+        // friend template functions
+        template<class hash_func> friend hashmap<hash_func> compute_histogram(const system&, const reg_type*, const hash_func&);
 
         // friend operators
         friend ostream& operator<<(ostream& out, const system& sys) 
@@ -616,18 +772,49 @@ namespace dci
             out << *this;
         }
 
+        //
+        // clusters
+        //
+
+
         // homogeneous system generation
-        system generate_homogeneous_system()
+        system generate_homogeneous_system(const unsigned int& random_seed)
         {
 
 
-            system s;
-            s.allocate_data(_props.N, _props.M, _props.NB);
+            system hs;
+            hs.allocate_data(_props.N, _props.M, _props.NB);
 
             // just copy agent pool
-            if (_agent_pool) memcpy(s._agent_pool, _agent_pool, _props.agent_pool_bytes);
+            if (_agent_pool) memcpy(hs._agent_pool, _agent_pool, _props.agent_pool_bytes);
 
-            return s;
+            // setup random generator
+            mt19937 rng(random_seed); // set random seed
+            uniform_int_distribution<size_t> gen(0, _props.M - 1); // setup random number generator  
+
+            // set sample value for each agent according to original distribution
+            for (auto& s : hs._samples)
+                for (size_t a = 0; a != _agents.size(); ++a)
+                {
+
+                    // get a random number between 0 and M-1
+                    size_t val = gen(rng);
+
+                    // retrieve corresponding value in distribution
+                    for (const auto& elem : _agents[a]->pdf())
+                    {
+                        if (val < elem.second)
+                        {
+                            _combine_from_mask(s->_data, elem.first, _agents[a]->_bitmask);
+                            break;
+                        }
+                        val -= elem.second;
+                    }
+
+                }
+
+
+            return hs;
 
         }
 
@@ -656,6 +843,11 @@ namespace dci
     //
     // agent_value class implementation
     //
+    inline void agent_value::set_from_sample_value(const reg_type* t)
+    {
+        _s->_parent->_assign_in_mask(_s->_data, t, _a->_bitmask);
+    }
+
     inline void agent_value::set_from_bits(const reg_type* t)
     {
         size_t pt = 0;
@@ -720,17 +912,10 @@ namespace dci
 
     void agent::compute_pdf()
     {
-        size_t dim = size();
-        _pdf = categorical_distribution(_parent->get_max_values(dim), murmur3_hasher(_parent->_props.S), register_compare(_parent->_props.S));
-        reg_type* buf = new reg_type[_parent->_props.S];
-        for (const auto& s : _parent->_samples)
-        {
-            _parent->_assign_from_mask(buf, s->_data, _bitmask);
-            reg temp(buf, _parent->_props.S);
-            _pdf[temp]++;
-        }
-        delete[] buf;
+        _pdf = compute_histogram(*_parent, _bitmask, murmur3_hasher(_parent->_props.S));
     }
+
+    inline fp_type agent::entropy() const { return dci::entropy(_pdf, _parent->_props.M); }
 
     //
     // sample class implementation
@@ -744,6 +929,11 @@ namespace dci
     { 
         return register_utils::write_bits(out, s._data, (s._parent)->_props.NB);
     }
+
+    //
+    // cluster class implementation
+    //
+
 
     //
     // system class implementation
@@ -837,6 +1027,31 @@ namespace dci
     {
         for(const auto& item : pdf) out << item.first << " -> " << item.second << endl;
             return out;
+    }
+
+    // utility functions
+    template<class hash_func> hashmap<hash_func> compute_histogram(const system& parent, const reg_type* mask, const hash_func& h)
+    {
+
+        // retrieve number of '1's
+        size_t dim = register_utils::count<1>(mask, parent._props.S);
+
+        // create histogram using given hash functor
+        hashmap<hash_func> histogram = hashmap<hash_func>(parent.get_max_values(dim), h, register_compare(parent._props.S));
+
+        // buffer for temporary values
+        reg_type* buf = new reg_type[parent._props.S];
+
+        // cycle all samples, apply mask and update frequency of occurrence
+        for (const auto& s : parent._samples)
+        {
+            parent._assign_from_mask(buf, s->_data, mask);
+            reg temp(buf, parent._props.S);
+            histogram[temp]++;
+        }
+        delete[] buf;
+
+        return histogram;
     }
 
 }
