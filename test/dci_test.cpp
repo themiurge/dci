@@ -267,19 +267,23 @@ TEST_CASE( "Homogeneous system - multilevel", "[system]" ) {
     dci::system d(n_agents, n_samples, bits_per_agent);
     for (size_t s = 0; s != d.samples().size(); ++s)
         for (size_t a = 0; a != d.agents().size(); ++a)
-            d[s][a] = s;
+            d[s][a] = (s < n_samples / 2) ? 1 : 0;
     d.compute_agent_statistics();
-    
+
     dci::system hs1 = d.generate_homogeneous_system(123456); 
-    dci::system hs2 = d.generate_homogeneous_system(654321); 
+    dci::system hs2 = d.generate_homogeneous_system(453664536); 
     REQUIRE( hs1.samples().size() == n_samples );
     REQUIRE( hs1.agents().size() == n_agents );
     REQUIRE( hs2.samples().size() == n_samples );
     REQUIRE( hs2.agents().size() == n_agents );
 
+    /*
     hs1.compute_agent_statistics();
-    for (const auto& a : hs1.agents())
-        cout << a->id() << " -> " << a->entropy() << endl;
+    hs2.compute_agent_statistics();
+    cout << d.agents()[0]->pdf() << endl;
+    cout << hs1.agents()[0]->pdf() << endl;
+    cout << hs2.agents()[0]->pdf() << endl;
+    */
 
     REQUIRE( hs1 != hs2 );
 
