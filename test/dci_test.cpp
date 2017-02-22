@@ -289,6 +289,47 @@ TEST_CASE( "Homogeneous system - multilevel", "[system]" ) {
 
 }
 
+TEST_CASE( "Real life system - arabidopsis", "[system]" ) {
+    dci::system d = dci::system::load_from_file("data/arabidopsis.txt");
+    REQUIRE( d.samples().size() == 5000 );
+    REQUIRE( d.agents().size() == 15 );
+
+    for (const auto& a : d.agents())
+        REQUIRE( a->size() == 1 );
+}
+
+TEST_CASE( "Clusters", "[cluster]" ) {
+    dci::system d(10, 100);
+    dci::cluster c1(&d, { 1, 3, 5 });
+    dci::cluster c2(&d, "0101010000");
+    dci::reg_type t = 42;
+    dci::cluster c3(&d, &t);
+    dci::cluster c4(&d, { 0, 2, 4, 6, 7, 8, 9 } );
+    dci::cluster c5 = !c2;
+    REQUIRE( c1 == c2 );
+    REQUIRE( c2 == c3 );
+    REQUIRE( c4 == c5 );
+    REQUIRE( c5 == !c3 );
+    REQUIRE( c4 != c1 );
+    REQUIRE( c5 != c2 );
+}
+
+TEST_CASE( "Clusters - multilevel", "[cluster]" ) {
+    dci::system d(10, 100, 47);
+    dci::cluster c1(&d, { 1, 3, 5 });
+    dci::cluster c2(&d, "0101010000");
+    dci::reg_type t = 42;
+    dci::cluster c3(&d, &t);
+    dci::cluster c4(&d, { 0, 2, 4, 6, 7, 8, 9 } );
+    dci::cluster c5 = !c2;
+    REQUIRE( c1 == c2 );
+    REQUIRE( c2 == c3 );
+    REQUIRE( c4 == c5 );
+    REQUIRE( c5 == !c3 );
+    REQUIRE( c4 != c1 );
+    REQUIRE( c5 != c2 );
+}
+
 TEST_CASE( "Exit" ) {
     cout << "Leaving test suite...\n";
     dci::print_allocation_stats(cout);

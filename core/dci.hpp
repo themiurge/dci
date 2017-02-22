@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <cmath>
 #include <random>
+#include <initializer_list>
 
 using namespace std;
 
@@ -74,6 +75,23 @@ namespace dci
                 n += count<b>(*(reg++));
             return n;
         }
+        inline reg_type get_last_reg_mask(const size_t& n) { return ((reg_type)1 << (n % bits_per_reg)) - 1; }
+
+        //
+        // template, template specializations and general function for negation
+        //
+        inline void negate(reg_type* dest, const reg_type* src, const reg_type& last_reg_mask, const size_t& S)
+        {
+            for (size_t i = 0; i != S; ++i) dest[i] = ~src[i]; dest[S-1] &= last_reg_mask;
+        }
+        template<size_t S> void negate(reg_type* dest, const reg_type* src, const reg_type& last_reg_mask)
+        {
+            return negate(dest, src, last_reg_mask, S);
+        }
+        template<> inline void negate<1>(reg_type* dest, const reg_type* src, const reg_type& last_reg_mask) { dest[0] = ~src[0] & last_reg_mask; }
+        template<> inline void negate<2>(reg_type* dest, const reg_type* src, const reg_type& last_reg_mask) { dest[0] = ~src[0]; dest[1] = ~src[1] & last_reg_mask; }
+        template<> inline void negate<3>(reg_type* dest, const reg_type* src, const reg_type& last_reg_mask) { dest[0] = ~src[0]; dest[1] = ~src[1]; dest[2] = ~src[2] & last_reg_mask; }
+        template<> inline void negate<4>(reg_type* dest, const reg_type* src, const reg_type& last_reg_mask) { dest[0] = ~src[0]; dest[1] = ~src[1]; dest[2] = ~src[2]; dest[3] = ~src[3] & last_reg_mask; }
 
         //
         // template, template specializations and general function for comparison
@@ -88,14 +106,8 @@ namespace dci
         }
         template<> inline bool equal<1>(const reg_type* a, const reg_type* b) { return a[0] == b[0]; }
         template<> inline bool equal<2>(const reg_type* a, const reg_type* b) { return a[0] == b[0] && a[1] == b[1]; }
-        template<> inline bool equal<3>(const reg_type* a, const reg_type* b) 
-        { 
-            /*write_bits(cout, a, 3 * bits_per_reg) << endl; write_bits(cout, b, 3 * bits_per_reg) << endl << endl;*/ 
-            //write_bits(cout, a, 3 * bits_per_reg) << " equal" << endl;
-            return a[0] == b[0] && a[1] == b[1] && a[2] == b[2]; 
-        }
+        template<> inline bool equal<3>(const reg_type* a, const reg_type* b) { return a[0] == b[0] && a[1] == b[1] && a[2] == b[2]; }
         template<> inline bool equal<4>(const reg_type* a, const reg_type* b) { return a[0] == b[0] && a[1] == b[1] && a[2] == b[2] && a[3] == b[3]; }
-
         
         //
         // template, template specializations and general function for assignment
@@ -255,6 +267,32 @@ namespace dci
         inline reg_type operator()(const reg_type* reg) const { return _f(reg, _s); }
     };
 
+    // Class for register negation
+    class register_negate {
+    private:
+        size_t _s;
+        reg_type _last_reg_mask;
+        void (*_f)(reg_type*, const reg_type*, const reg_type&, const size_t&);
+        template<size_t S> inline static void _wrapper(reg_type* dest, const reg_type* src, const reg_type& last_reg_mask, const size_t& s) { register_utils::negate<S>(dest, src, last_reg_mask); }
+    public:
+        register_negate(const size_t& s = 0, const size_t& n = 0) : _s(s)
+        { 
+            // use template specializations for small values of S
+            switch (s)
+            {
+                case 1: _f = _wrapper<1>; break;
+                case 2: _f = _wrapper<2>; break;
+                case 3: _f = _wrapper<3>; break;
+                case 4: _f = _wrapper<4>; break;
+                default: _f = register_utils::negate; break;
+            }
+
+            // build last reg mask
+            _last_reg_mask = register_utils::get_last_reg_mask(n);
+        }
+        inline void operator()(reg_type* dest, const reg_type* src) const { _f(dest, src, _last_reg_mask, _s); }
+    };
+
     // Class for register comparison
     class register_compare {
     private:
@@ -392,14 +430,18 @@ namespace dci
         size_t N; // number of agents
         size_t M; // number of samples
         size_t S; // number of registers per sample
+        size_t SA; // number of registers per cluster (compact format, i.e. one bit per agent)
         size_t NB; // number of bits per sample
         size_t sample_bytes;
         size_t data_bytes;
         size_t agent_pool_bytes;
+        size_t compact_cluster_bytes;
         inline void init(const size_t& N, const size_t& M, const size_t& NB)
         {
             this->N = N; this->M = M; this->NB = NB;
             S = register_utils::number_of_registers(NB);
+            SA = register_utils::number_of_registers(N);
+            compact_cluster_bytes = SA * bytes_per_reg;
             sample_bytes = S * bytes_per_reg;
             data_bytes = sample_bytes * M;
             agent_pool_bytes = sample_bytes * N;
@@ -524,6 +566,7 @@ namespace dci
         // friend operators
         friend ostream& operator<<(ostream& out, const agent& a);
         friend istream& operator>>(istream& in, system& sys); 
+        friend ostream& operator<<(ostream& out, const cluster& c);
 
         virtual ~agent() { if (_parent) agent::n_del++; }   
 
@@ -574,7 +617,6 @@ namespace dci
         void set_from_sample_value(const reg_type* t);
     public:
 
-        // NOTE: these operators assume that agent size in bits <= bits_per_reg
         template<typename T> agent_value operator=(T t);
         template<typename T> bool operator==(T t) const;
 
@@ -587,7 +629,74 @@ namespace dci
     };
 
     class cluster {
+    public:
+        static size_t n_new;
+        static size_t n_del;
     private:
+        system* _parent;
+        reg_type* _bitmask;
+        reg_type* _compact;
+        size_t _size;
+
+        void build_bitmask();
+        void allocate_data();
+        void reset_data();
+        inline void reset_fields() { _bitmask = nullptr; _compact = nullptr; }
+        inline void free_data() { if (_bitmask) delete[] _bitmask; if (_compact) delete[] _compact; cluster::n_del++; }
+        void copy_from(const cluster&);
+        void move_from(cluster&&);
+        void build_from_compact_bitmask(const reg_type*);
+        void build_from_compact_string(const string&);
+        template<typename T> void build_from_initializer_list(initializer_list<T>);
+    public:
+
+        // default constructor, just never use it
+        cluster();
+
+        // system only - empty cluster
+        cluster(system*);
+
+        // system + compact bitmask
+        cluster(system*, const reg_type*);
+
+        // system + string bitmask
+        cluster(system*, const string&);
+
+        // system + initializer list
+        template<typename T> cluster(system*, initializer_list<T>);
+
+        // copy constructor
+        cluster(const cluster&);
+
+        // move constructor
+        cluster(cluster&&);
+
+        // compact bitmask - assumes same parent system
+        cluster& operator=(const reg_type*);
+
+        // string bitmask - assumes same parent system
+        cluster& operator=(const string&);
+
+        // initializer list - assumes same parent system
+        template<typename T> cluster& operator=(initializer_list<T>);
+
+        // copy assignment
+        cluster& operator=(const cluster&);
+
+        // move assignment
+        cluster& operator=(cluster&&);
+
+        // friend operators
+        friend bool operator==(const cluster&, const cluster&);
+        friend bool operator!=(const cluster&, const cluster&);
+        friend cluster operator!(const cluster&);
+        friend ostream& operator<<(ostream& out, const cluster& c);
+
+        // member access
+        inline size_t size() { return _size; }
+
+        // destructor
+        virtual ~cluster() { free_data(); }
 
     };
 
@@ -600,13 +709,27 @@ namespace dci
         vector<agent*> _agents;
         reg_type* _data;
         reg_type* _agent_pool;
+
         system_properties _props;
+
+        // register functors - standard (_props.S registers)
         register_compare _equal;
+        register_negate _negate;
         register_assign _assign;
         register_assign_from_mask _assign_from_mask;
         register_assign_in_mask _assign_in_mask;
         register_combine _combine;
         register_combine_from_mask _combine_from_mask;
+
+        // register functors - compact (_props.SA registers)
+        register_compare _equal_compact;
+        register_negate _negate_compact;
+        register_assign _assign_compact;
+        register_assign_from_mask _assign_from_mask_compact;
+        register_assign_in_mask _assign_in_mask_compact;
+        register_combine _combine_compact;
+        register_combine_from_mask _combine_from_mask_compact;
+
         inline void reset_fields()
         {
             _samples.resize(0);
@@ -627,12 +750,24 @@ namespace dci
             _props.init(N, M, NB);
             _samples.resize(_props.M, nullptr);
             _agents.resize(_props.N, nullptr);
+
+            // initialize standard register functors
             _equal = register_compare(_props.S);
+            _negate = register_negate(_props.S, _props.NB);
             _assign = register_assign(_props.S);
             _assign_from_mask = register_assign_from_mask(_props.S);
             _assign_in_mask = register_assign_in_mask(_props.S);
             _combine = register_combine(_props.S);
             _combine_from_mask = register_combine_from_mask(_props.S);
+
+            // initialize compact register functors
+            _equal_compact = register_compare(_props.SA);
+            _negate_compact = register_negate(_props.SA, _props.N);
+            _assign_compact = register_assign(_props.SA);
+            _assign_from_mask_compact = register_assign_from_mask(_props.SA);
+            _assign_in_mask_compact = register_assign_in_mask(_props.SA);
+            _combine_compact = register_combine(_props.SA);
+            _combine_from_mask_compact = register_combine_from_mask(_props.SA);
             
             // empty system
             if (!_props.N)
@@ -764,6 +899,10 @@ namespace dci
         friend bool operator==(const system& s1, const system& s2);
         friend bool operator!=(const system& s1, const system& s2);
         friend istream& operator>>(istream& in, system& s);
+        friend bool operator==(const cluster& c1, const cluster& c2);
+        friend bool operator!=(const cluster& c1, const cluster& c2);
+        friend cluster operator!(const cluster&);
+        friend ostream& operator<<(ostream& out, const cluster& c);
 
         // save functions
         void save_to_file(const string& file_path)
@@ -933,7 +1072,137 @@ namespace dci
     //
     // cluster class implementation
     //
+    inline void cluster::reset_data()
+    {
+        if (!_bitmask) return;
+        memset(_bitmask, 0, _parent->_props.sample_bytes);
+        memset(_compact, 0, _parent->_props.compact_cluster_bytes);
+    }
 
+    inline void cluster::allocate_data()
+    {
+        if (_parent && _parent->_props.S)
+        {
+            _bitmask = new reg_type[_parent->_props.S];
+            _compact = new reg_type[_parent->_props.SA];
+            reset_data();
+        }
+        else
+        {
+            _bitmask = nullptr;
+            _compact = nullptr;
+        }
+        cluster::n_new++;
+    }
+
+    inline void cluster::build_bitmask()
+    {
+        _size = 0;
+        for (size_t a = 0; a != _parent->_props.N; ++a)
+            if (register_utils::get_bit(_compact, a))
+            {
+                ++_size;
+                _parent->_combine(_bitmask, _parent->_agents[a]->_bitmask);
+            }
+    }
+
+    inline void cluster::copy_from(const cluster& c)
+    {
+        _parent = c._parent; 
+        allocate_data(); 
+        _parent->_assign_compact(_compact, c._compact);
+        _parent->_assign(_bitmask, c._bitmask);
+    }
+
+    inline void cluster::move_from(cluster&& c)
+    {
+        _parent = c._parent; 
+        _compact = c._compact;
+        _bitmask = c._bitmask;
+
+        c.reset_fields();
+    }
+
+    inline void cluster::build_from_compact_bitmask(const reg_type* compact)
+    {
+        _parent->_assign_compact(_compact, compact); build_bitmask();
+    }
+
+    inline void cluster::build_from_compact_string(const string& compact)
+    {
+        register_utils::set_bits_from_string(_compact, compact); build_bitmask();
+    }
+
+    template<typename T> inline void cluster::build_from_initializer_list(initializer_list<T> l)
+    {
+        for (const auto& a : l) register_utils::set_bit(_compact, a, 1); build_bitmask();
+    }
+
+    // default constructor, just never use it
+    cluster::cluster() { _parent = nullptr; allocate_data(); }
+
+    // system only - empty cluster
+    cluster::cluster(system* s) { _parent = s; allocate_data(); }
+
+    // system + compact bitmask
+    cluster::cluster(system* s, const reg_type* compact) { _parent = s; allocate_data(); build_from_compact_bitmask(compact); }
+
+    // system + string bitmask
+    cluster::cluster(system* s, const string& compact) { _parent = s; allocate_data(); build_from_compact_string(compact); }
+
+    // system + initializer list
+    template<typename T> cluster::cluster(system* s, initializer_list<T> l) { _parent = s; allocate_data(); build_from_initializer_list(l); }
+
+    // copy constructor
+    cluster::cluster(const cluster& c) { copy_from(c); }
+
+    // move constructor
+    cluster::cluster(cluster&& c) { move_from(move(c)); }
+
+    // compact bitmask - assumes same parent system
+    inline cluster& cluster::operator=(const reg_type* compact) { reset_data(); build_from_compact_bitmask(compact); return *this; }
+
+    // string bitmask - assumes same parent system
+    inline cluster& cluster::operator=(const string& compact) { reset_data(); build_from_compact_string(compact); return *this; }
+
+    // initializer list - assumes same parent system
+    template<typename T> inline cluster& cluster::operator=(initializer_list<T> l) { reset_data(); build_from_initializer_list(l); return *this; }
+
+    // copy assignment
+    cluster& cluster::operator=(const cluster&c) { if (&c != this) { free_data(); copy_from(c); } return *this; }
+
+    // move assignment
+    cluster& cluster::operator=(cluster&& c) { if (&c != this) { free_data(); move_from(move(c)); } return *this; }
+
+    // comparison
+    inline bool operator==(const cluster& c1, const cluster& c2) 
+    {
+        return c1._parent == c2._parent && (!c1._parent ||
+            c1._parent->_equal_compact(c1._compact, c2._compact)
+            );
+    }
+
+    inline bool operator!=(const cluster& c1, const cluster& c2) 
+    {
+        return c1._parent != c2._parent || (c1._parent && !c1._parent->_equal_compact(c1._compact, c2._compact));
+    }
+
+    inline cluster operator!(const cluster& c)
+    {
+        cluster comp(c._parent);
+        comp._parent->_negate_compact(comp._compact, c._compact);
+        comp._parent->_negate(comp._bitmask, c._bitmask);
+        comp._size = comp._parent->_props.N - c._size;
+        return comp;
+    }
+
+    ostream& operator<<(ostream& out, const cluster& c)
+    {
+        for (size_t i = 0; i != c._parent->_props.N; ++i)
+            if (register_utils::get_bit(c._compact, i))
+                out << '[' << c._parent->_agents[i]->_name << ']';
+        return out;
+    }
 
     //
     // system class implementation
@@ -1007,13 +1276,17 @@ namespace dci
     size_t agent::n_del = 0;
     size_t sample::n_new = 0;
     size_t sample::n_del = 0;
+    size_t cluster::n_new = 0;
+    size_t cluster::n_del = 0;
 
     ostream& print_allocation_stats(ostream& out)
     {
         out << "reg class performed " << dci::reg::n_new << " new[] and " << dci::reg::n_del << " delete[] statements\n";
         out << "system class performed " << dci::system::n_new << " new[] and " << dci::system::n_del << " delete[] statements\n";
+        out << "cluster class performed " << dci::cluster::n_new << " new[] and " << dci::cluster::n_del << " delete[] statements\n";
         out << "agent class performed " << dci::agent::n_new << " new and " << dci::agent::n_del << " delete statements\n";
         out << "sample class performed " << dci::sample::n_new << " new and " << dci::sample::n_del << " delete statements\n"; 
+
         return out;
     }
 
