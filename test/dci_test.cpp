@@ -330,6 +330,51 @@ TEST_CASE( "Clusters - multilevel", "[cluster]" ) {
     REQUIRE( c5 != c2 );
 }
 
+TEST_CASE( "Cluster histograms", "[cluster]" ) {
+    dci::system d(10, 100);
+    REQUIRE( d.samples().size() == 100 );
+    REQUIRE( d.agents().size() == 10 );
+    for (size_t s = 0; s != d.samples().size(); ++s)
+        for (size_t a = 0; a != d.agents().size(); ++a)
+            d[s][a] = a % 2;
+
+    dci::cluster c1(&d, { 1, 3, 5 });
+    dci::cluster c2 = !c1;
+
+    REQUIRE( c1.histogram().size() == 1 );
+    REQUIRE( c1.histogram().begin()->second == 100 );
+    REQUIRE( c1.entropy() == Approx(0.0) );
+
+    REQUIRE( c2.histogram().size() == 1 );
+    REQUIRE( c2.histogram().begin()->second == 100 );
+    REQUIRE( c2.entropy() == Approx(0.0) );
+
+}
+
+TEST_CASE( "Cluster histograms - multilevel", "[system]") {
+    constexpr size_t n_agents = 200;
+    constexpr size_t n_samples = 100;
+    constexpr size_t bits_per_agent = 8;
+    dci::system d(n_agents, n_samples, bits_per_agent);
+    for (size_t s = 0; s != d.samples().size(); ++s)
+        for (size_t a = 0; a != d.agents().size(); ++a)
+            d[s][a] = s;
+
+    dci::cluster c1(&d, { 1, 3, 5 });
+    dci::cluster c2 = !c1;
+
+    REQUIRE( c1.histogram().size() == n_samples );
+    for (const auto& item : c1.histogram())
+        REQUIRE( item.second == 1 );
+    REQUIRE( c1.entropy() == Approx(std::log2((dci::fp_type)n_samples)) );
+
+    REQUIRE( c2.histogram().size() == n_samples );
+    for (const auto& item : c2.histogram())
+        REQUIRE( item.second == 1 );
+    REQUIRE( c2.entropy() == Approx(std::log2((dci::fp_type)n_samples)) );
+
+}
+
 TEST_CASE( "Exit" ) {
     cout << "Leaving test suite...\n";
     dci::print_allocation_stats(cout);

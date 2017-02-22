@@ -514,6 +514,7 @@ namespace dci
     // This is just a typedef for a categorical distribution
     template<class hash_func> using hashmap = unordered_map<reg, size_t, hash_func, register_compare>;
     using categorical_distribution = hashmap<murmur3_hasher>;
+    using histogram_type = hashmap<murmur3_hasher>;
 
     // Template function used to compute entropy over a histogram
     template<class hash_func> 
@@ -543,10 +544,13 @@ namespace dci
         reg_type* _bitmask;
         string _name;
         size_t _id;
+        fp_type _entropy;
+        bool _got_entropy;
+
         categorical_distribution _pdf;
-        agent() : _bitmask(nullptr), _name(), _pdf(), _id(0) { }
+        agent() : _bitmask(nullptr), _name(), _pdf(), _id(0), _got_entropy(false) { }
         agent(reg_type* agent_bitmask, const string& agent_name, const size_t& id, system* parent_system) : 
-            _bitmask(agent_bitmask), _name(agent_name), _parent(parent_system), _pdf(), _id(id)
+            _bitmask(agent_bitmask), _name(agent_name), _parent(parent_system), _pdf(), _id(id), _got_entropy(false)
         { agent::n_new++; }
         void compute_pdf();
     public:
@@ -554,7 +558,7 @@ namespace dci
         inline const string& name() const { return _name; }
         inline const size_t& id() const { return _id; }
         inline const categorical_distribution& pdf() const { return _pdf; }
-        fp_type entropy() const;
+        fp_type entropy();
         size_t size() const;
 
         // friend classes
@@ -636,13 +640,16 @@ namespace dci
         system* _parent;
         reg_type* _bitmask;
         reg_type* _compact;
+        fp_type _entropy;
+        bool _got_entropy;
         size_t _size;
-
+        histogram_type _histogram;
+        
         void build_bitmask();
         void allocate_data();
         void reset_data();
-        inline void reset_fields() { _bitmask = nullptr; _compact = nullptr; }
-        inline void free_data() { if (_bitmask) delete[] _bitmask; if (_compact) delete[] _compact; cluster::n_del++; }
+        inline void reset_fields() { _bitmask = nullptr; _compact = nullptr; _histogram.clear(); _size = 0; _got_entropy = false; }
+        inline void free_data() { if (_bitmask) delete[] _bitmask; if (_compact) delete[] _compact; _histogram.clear(); cluster::n_del++; }
         void copy_from(const cluster&);
         void move_from(cluster&&);
         void build_from_compact_bitmask(const reg_type*);
@@ -694,6 +701,8 @@ namespace dci
 
         // member access
         inline size_t size() { return _size; }
+        const histogram_type& histogram();
+        fp_type entropy();
 
         // destructor
         virtual ~cluster() { free_data(); }
@@ -729,6 +738,10 @@ namespace dci
         register_assign_in_mask _assign_in_mask_compact;
         register_combine _combine_compact;
         register_combine_from_mask _combine_from_mask_compact;
+
+        // hash functors
+        murmur3_hasher _cluster_hasher;
+        murmur3_hasher _agent_hasher;
 
         inline void reset_fields()
         {
@@ -768,6 +781,10 @@ namespace dci
             _assign_in_mask_compact = register_assign_in_mask(_props.SA);
             _combine_compact = register_combine(_props.SA);
             _combine_from_mask_compact = register_combine_from_mask(_props.SA);
+
+            // hash functors
+            _cluster_hasher = murmur3_hasher(_props.S);
+            _agent_hasher = murmur3_hasher(_props.S);
             
             // empty system
             if (!_props.N)
@@ -1051,10 +1068,10 @@ namespace dci
 
     void agent::compute_pdf()
     {
-        _pdf = compute_histogram(*_parent, _bitmask, murmur3_hasher(_parent->_props.S));
+        _pdf = compute_histogram(*_parent, _bitmask, _parent->_agent_hasher);
     }
 
-    inline fp_type agent::entropy() const { return dci::entropy(_pdf, _parent->_props.M); }
+    inline fp_type agent::entropy() { if (!_got_entropy) { _entropy = dci::entropy(_pdf, _parent->_props.M); _got_entropy = true; } return _entropy; }
 
     //
     // sample class implementation
@@ -1092,6 +1109,7 @@ namespace dci
             _bitmask = nullptr;
             _compact = nullptr;
         }
+        _got_entropy = false;
         cluster::n_new++;
     }
 
@@ -1112,6 +1130,10 @@ namespace dci
         allocate_data(); 
         _parent->_assign_compact(_compact, c._compact);
         _parent->_assign(_bitmask, c._bitmask);
+        _got_entropy = c._got_entropy;
+        _entropy = c._entropy;
+        _histogram = c._histogram;
+        _size = c._size;
     }
 
     inline void cluster::move_from(cluster&& c)
@@ -1119,6 +1141,10 @@ namespace dci
         _parent = c._parent; 
         _compact = c._compact;
         _bitmask = c._bitmask;
+        _got_entropy = c._got_entropy;
+        _entropy = c._entropy;
+        _size = c._size;
+        _histogram = move(c._histogram);
 
         c.reset_fields();
     }
@@ -1137,6 +1163,14 @@ namespace dci
     {
         for (const auto& a : l) register_utils::set_bit(_compact, a, 1); build_bitmask();
     }
+
+    inline const histogram_type& cluster::histogram()
+    {
+        if (_histogram.size() == 0) _histogram = compute_histogram(*_parent, _bitmask, _parent->_cluster_hasher);
+        return _histogram;
+    }
+
+    inline fp_type cluster::entropy() { if (!_got_entropy) { _entropy = dci::entropy(histogram(), _parent->_props.M); _got_entropy = true; } return _entropy; }
 
     // default constructor, just never use it
     cluster::cluster() { _parent = nullptr; allocate_data(); }
