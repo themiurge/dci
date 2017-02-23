@@ -8,6 +8,9 @@
 #include <cmath>
 #include <random>
 #include <initializer_list>
+#include <algorithm>
+#include <limits>
+#include <queue>
 
 using namespace std;
 
@@ -25,6 +28,8 @@ namespace dci
 
     // Floating point operations type definition
     typedef float fp_type;
+    constexpr fp_type eps = 1e-6;
+    constexpr fp_type nan = numeric_limits<fp_type>::quiet_NaN();
 
     // Register utilities
     namespace register_utils 
@@ -265,6 +270,67 @@ namespace dci
     public:
         basic_hasher(const size_t& s = 0) : _s(s) { _f = register_utils::basic_hash; }
         inline reg_type operator()(const reg_type* reg) const { return _f(reg, _s); }
+    };
+    
+    //
+    // This class is used to compute statistics
+    // over a running sequence of fp_type values
+    //
+    class running_stat 
+    {
+    public:
+        running_stat() : m_n(0) {}
+
+        void clear()
+        {
+            m_n = 0;
+        }
+
+        void push(fp_type x)
+        {
+            m_n++;
+
+            // See Knuth TAOCP vol 2, 3rd edition, page 232
+            if (m_n == 1)
+            {
+                m_oldM = m_newM = x;
+                m_oldS = 0.0;
+            }
+            else
+            {
+                m_newM = m_oldM + (x - m_oldM)/m_n;
+                m_newS = m_oldS + (x - m_oldM)*(x - m_newM);
+
+                // set up for next iteration
+                m_oldM = m_newM; 
+                m_oldS = m_newS;
+            }
+        }
+
+        int num_data_values() const
+        {
+            return m_n;
+        }
+
+        fp_type mean() const
+        {
+            return (m_n > 0) ? m_newM : 0.0;
+        }
+
+        fp_type variance() const
+        {
+            return ( (m_n > 1) ? m_newS/(m_n - 1) : 0.0 );
+        }
+
+        fp_type standard_deviation() const
+        {
+            return sqrt( variance() );
+        }
+
+    private:
+
+        size_t m_n;
+        fp_type m_oldM, m_newM, m_oldS, m_newS;
     };
 
     // Class for register negation
@@ -511,10 +577,13 @@ namespace dci
     // This class represents a group of agents
     class cluster;
 
+    // This class represents a cluster generator (by lexicographic permutation)
+    class cluster_generator;
+
     // This is just a typedef for a categorical distribution
     template<class hash_func> using hashmap = unordered_map<reg, size_t, hash_func, register_compare>;
     using categorical_distribution = hashmap<murmur3_hasher>;
-    using histogram_type = hashmap<murmur3_hasher>;
+    using histogram_type = hashmap<basic_hasher>;
 
     // Template function used to compute entropy over a histogram
     template<class hash_func> 
@@ -640,10 +709,10 @@ namespace dci
         system* _parent;
         reg_type* _bitmask;
         reg_type* _compact;
-        fp_type _entropy;
-        bool _got_entropy;
+        mutable fp_type _entropy, _comp_entropy, _cluster_index, _statistical_index;
+        mutable bool _got_entropy, _got_comp_entropy, _got_cluster_index, _got_statistical_index;
         size_t _size;
-        histogram_type _histogram;
+        mutable histogram_type _histogram;
         
         void build_bitmask();
         void allocate_data();
@@ -692,6 +761,10 @@ namespace dci
 
         // move assignment
         cluster& operator=(cluster&&);
+        
+        // friend classes
+        friend class cluster_generator;
+        friend class system;
 
         // friend operators
         friend bool operator==(const cluster&, const cluster&);
@@ -701,12 +774,32 @@ namespace dci
 
         // member access
         inline size_t size() { return _size; }
-        const histogram_type& histogram();
-        fp_type entropy();
+        const histogram_type& histogram() const;
+        fp_type entropy() const;
+        fp_type comp_entropy() const;
+        fp_type cluster_index() const;
+        fp_type statistical_index() const;
+        void set_comp_entropy(const fp_type& ent_val) { _comp_entropy = ent_val; _got_comp_entropy = true; }
+        
+        // comparison operator for priority queues
+        inline bool operator<(const cluster& c) const { return statistical_index() > c.statistical_index(); }
 
         // destructor
         virtual ~cluster() { free_data(); }
 
+    };
+    
+    class cluster_generator {
+    private:
+        system* _parent;
+        size_t _size;
+        string _current;
+        bool _has_next;
+        cluster_generator() { }
+    public:
+        cluster_generator(system* parent, size_t size);
+        bool has_next() const { return _has_next; }
+        cluster next();
     };
 
     class system {
@@ -718,8 +811,15 @@ namespace dci
         vector<agent*> _agents;
         reg_type* _data;
         reg_type* _agent_pool;
+        
+        vector<fp_type> _dci_mean;
+        vector<fp_type> _dci_sigma;
 
         system_properties _props;
+        fp_type _system_entropy;
+        size_t _system_diff_vals;
+        
+        bool _got_cluster_index_statistics;
 
         // register functors - standard (_props.S registers)
         register_compare _equal;
@@ -740,7 +840,7 @@ namespace dci
         register_combine_from_mask _combine_from_mask_compact;
 
         // hash functors
-        murmur3_hasher _cluster_hasher;
+        basic_hasher _cluster_hasher;
         murmur3_hasher _agent_hasher;
 
         inline void reset_fields()
@@ -763,6 +863,11 @@ namespace dci
             _props.init(N, M, NB);
             _samples.resize(_props.M, nullptr);
             _agents.resize(_props.N, nullptr);
+            
+            _system_diff_vals = _props.M;
+            
+            _dci_mean.resize(_props.N - 2, 0.0);
+            _dci_sigma.resize(_props.N - 2, 0.0);
 
             // initialize standard register functors
             _equal = register_compare(_props.S);
@@ -781,9 +886,12 @@ namespace dci
             _assign_in_mask_compact = register_assign_in_mask(_props.SA);
             _combine_compact = register_combine(_props.SA);
             _combine_from_mask_compact = register_combine_from_mask(_props.SA);
+            
+            // initialize flags
+            _got_cluster_index_statistics = false;
 
             // hash functors
-            _cluster_hasher = murmur3_hasher(_props.S);
+            _cluster_hasher = basic_hasher(_props.S);
             _agent_hasher = murmur3_hasher(_props.S);
             
             // empty system
@@ -803,7 +911,7 @@ namespace dci
 
             // set internal pointers for agents and samples
             for (size_t a = 0; a != _props.N; ++a)
-                _agents[a] = new agent(_agent_pool + a * _props.S, string(1, '0' + a), a, this);
+                _agents[a] = new agent(_agent_pool + a * _props.S, to_string(a), a, this);
             for (size_t s = 0; s != _props.M; ++s)
                 _samples[s] = new sample(_data + s * _props.S, this);
         }
@@ -829,8 +937,21 @@ namespace dci
         }
         size_t get_max_values(const size_t& nbits) const
         {
-            if (nbits > sizeof(size_t) * 8 || (1 << nbits) > _props.M) return _props.M;
+            if (nbits > sizeof(size_t) * 8 || (1 << nbits) > _system_diff_vals) return _system_diff_vals;
             return 1 << nbits;
+        }
+        inline void check_insert_cluster_in_queue(const cluster& c, priority_queue<cluster>& q, const size_t& num_results)
+        {
+            if (q.size() < num_results)
+            {
+                q.push(c);
+                return;
+            }
+            if (q.top().statistical_index() < c.statistical_index())
+            {
+                q.pop();
+                q.push(c);
+            }
         }
     public:
 
@@ -890,6 +1011,7 @@ namespace dci
         friend class agent;
         friend class agent_value;
         friend class cluster;   
+        friend class cluster_generator;
 
         // friend template functions
         template<class hash_func> friend hashmap<hash_func> compute_histogram(const system&, const reg_type*, const hash_func&);
@@ -975,11 +1097,101 @@ namespace dci
         }
 
         // stats
+        inline fp_type get_mean_dci(const size_t& cluster_size) { return _dci_mean[cluster_size - 2]; }
+        inline fp_type get_sigma_dci(const size_t& cluster_size) { return _dci_sigma[cluster_size - 2]; }
+
         void compute_agent_statistics()
         {
             for (auto& a : _agents) a->compute_pdf();
+            cluster sys(this, string(_props.N, '1'));
+            _system_entropy = sys.entropy();
+            _system_diff_vals = sys.histogram().size();
         }
-
+        
+        void compute_cluster_index_statistics()
+        {
+        
+            if (_got_cluster_index_statistics) return;
+        
+            // create rolling stat objects
+            vector<running_stat> stats(_props.N - 2);
+            
+            // cycle all cluster sizes
+            for (size_t s = 1; s != _props.N / 2 + 1; ++s)
+            {
+                cluster_generator gen(this, s);
+                while (gen.has_next())
+                {
+                    cluster cur = gen.next();
+                    cluster comp = !cur;
+                    cur.set_comp_entropy(comp.entropy());
+                    comp.set_comp_entropy(cur.entropy());
+                    if (s > 1 && !isnan(cur.cluster_index())) stats[s - 2].push(cur.cluster_index());
+                    if ((_props.N % 2 || s != _props.N / 2) && !isnan(comp.cluster_index())) stats[_props.N - s - 2].push(comp.cluster_index());
+                }
+                
+            }
+            
+            // copy stats to local arrays
+            for (size_t i = 0; i != _props.N - 2; ++i)
+            {
+                _dci_mean[i] = stats[i].mean();
+                _dci_sigma[i] = stats[i].standard_deviation();
+            }
+            
+            _got_cluster_index_statistics = true;
+            
+        }
+        
+        void load_cluster_index_statistics_from_homogeneous_system(system& hs)
+        {
+        
+            // compute hs stats if necessary
+            hs.compute_cluster_index_statistics();
+            
+            // copy stats
+            _dci_mean = hs._dci_mean;
+            _dci_sigma = hs._dci_sigma;
+            
+        }
+        
+        ostream& write_cluster_index_statistics(ostream& out)
+        {
+            out << 0.0 << endl << 0.0 << endl;
+            for (size_t i = 0; i != _props.N - 2; ++i)
+                out << _dci_mean[i] << endl << _dci_sigma[i] << endl;
+            out << 0.0 << endl << 0.0 << endl;
+            return out;
+        }
+        
+        //
+        // Output computation
+        //
+        priority_queue<cluster> compute_system_statistics(const size_t& num_results)
+        {
+        
+            priority_queue<cluster> results;
+            
+            // cycle all cluster sizes
+            for (size_t s = 1; s != _props.N / 2 + 1; ++s)
+            {
+                cluster_generator gen(this, s);
+                while (gen.has_next())
+                {
+                    cluster cur = gen.next();
+                    cluster comp = !cur;
+                    cur.set_comp_entropy(comp.entropy());
+                    comp.set_comp_entropy(cur.entropy());
+                    if (s > 1 && !isnan(cur.statistical_index())) check_insert_cluster_in_queue(cur, results, num_results);
+                    if ((_props.N % 2 || s != _props.N / 2) && !isnan(comp.statistical_index())) check_insert_cluster_in_queue(comp, results, num_results);
+                }
+                
+            }
+            
+            return results;
+            
+        }
+        
         //
         // System factories
         //
@@ -1110,6 +1322,9 @@ namespace dci
             _compact = nullptr;
         }
         _got_entropy = false;
+        _got_comp_entropy = false;
+        _got_cluster_index = false;
+        _got_statistical_index = false;
         cluster::n_new++;
     }
 
@@ -1130,8 +1345,16 @@ namespace dci
         allocate_data(); 
         _parent->_assign_compact(_compact, c._compact);
         _parent->_assign(_bitmask, c._bitmask);
+
         _got_entropy = c._got_entropy;
         _entropy = c._entropy;
+        _got_comp_entropy = c._got_comp_entropy;
+        _comp_entropy = c._comp_entropy;
+        _got_cluster_index = c._got_cluster_index;
+        _cluster_index = c._cluster_index;
+        _got_statistical_index = c._got_statistical_index;
+        _statistical_index = c._statistical_index;
+
         _histogram = c._histogram;
         _size = c._size;
     }
@@ -1141,8 +1364,16 @@ namespace dci
         _parent = c._parent; 
         _compact = c._compact;
         _bitmask = c._bitmask;
+        
         _got_entropy = c._got_entropy;
         _entropy = c._entropy;
+        _got_comp_entropy = c._got_comp_entropy;
+        _comp_entropy = c._comp_entropy;
+        _got_cluster_index = c._got_cluster_index;
+        _cluster_index = c._cluster_index;
+        _got_statistical_index = c._got_statistical_index;
+        _statistical_index = c._statistical_index;
+
         _size = c._size;
         _histogram = move(c._histogram);
 
@@ -1164,14 +1395,37 @@ namespace dci
         for (const auto& a : l) register_utils::set_bit(_compact, a, 1); build_bitmask();
     }
 
-    inline const histogram_type& cluster::histogram()
+    inline const histogram_type& cluster::histogram() const
     {
         if (_histogram.size() == 0) _histogram = compute_histogram(*_parent, _bitmask, _parent->_cluster_hasher);
         return _histogram;
     }
 
-    inline fp_type cluster::entropy() { if (!_got_entropy) { _entropy = dci::entropy(histogram(), _parent->_props.M); _got_entropy = true; } return _entropy; }
-
+    inline fp_type cluster::entropy() const { if (!_got_entropy) { _entropy = dci::entropy(histogram(), _parent->_props.M); _got_entropy = true; } return _entropy; }
+    
+    inline fp_type cluster::comp_entropy() const { if (!_got_comp_entropy) { _comp_entropy = (!(*this)).entropy(); _got_comp_entropy = true; } return _comp_entropy; }
+    
+    inline fp_type cluster::cluster_index() const 
+    { 
+        if (!_got_cluster_index) 
+        { 
+            fp_type integration = -entropy();
+            for (size_t a = 0; a != _parent->_props.N; ++a)
+                if (register_utils::get_bit(_compact, a))
+                    integration += _parent->_agents[a]->entropy();
+            fp_type mutual_information = entropy() + comp_entropy() - _parent->_system_entropy;
+            if (fabs(mutual_information) < eps) 
+                _cluster_index = numeric_limits<fp_type>::quiet_NaN();
+            else
+                _cluster_index = integration / mutual_information;
+            //if (_size == 14) cout << "H = " << entropy() << ", Hc = " << comp_entropy() << ", Hs = " << _parent->_system_entropy << ", I = " << integration << ", M = " << mutual_information << ", DCI = " << _cluster_index << endl;
+            _got_cluster_index = true; 
+        } 
+        return _cluster_index; 
+    }
+    
+    inline fp_type cluster::statistical_index() const { if (!_got_statistical_index) { _statistical_index = (cluster_index() - _parent->get_mean_dci(_size)) / _parent->get_sigma_dci(_size); _got_statistical_index = true; } return _statistical_index; }
+    
     // default constructor, just never use it
     cluster::cluster() { _parent = nullptr; allocate_data(); }
 
@@ -1236,6 +1490,21 @@ namespace dci
             if (register_utils::get_bit(c._compact, i))
                 out << '[' << c._parent->_agents[i]->_name << ']';
         return out;
+    }
+    
+    //
+    // cluster_generator class implementation
+    //
+    cluster_generator::cluster_generator(system* parent, size_t size) : _parent(parent), _size(size), _has_next(true) 
+    { 
+        _current = string(_parent->_props.N, '0'); for (size_t i = 0; i != _size; ++i) _current[i] = '1'; 
+    }
+    
+    inline cluster cluster_generator::next() 
+    { 
+        cluster c(_parent, _current); 
+        _has_next = prev_permutation(_current.begin(), _current.end()); 
+        return c; 
     }
 
     //

@@ -289,24 +289,6 @@ TEST_CASE( "Homogeneous system - multilevel", "[system]" ) {
 
 }
 
-TEST_CASE( "Real life system - arabidopsis", "[system]" ) {
-    dci::system d = dci::system::load_from_file("data/arabidopsis.txt");
-    REQUIRE( d.samples().size() == 5000 );
-    REQUIRE( d.agents().size() == 15 );
-    d.compute_agent_statistics();
-    for (const auto& a : d.agents())
-        REQUIRE( a->size() == 1 );
-
-    dci::cluster c(&d, { 13, 14 });
-    dci::cluster comp = !c;
-    dci::cluster sys(&d, "111111111111111");
-    dci::fp_type integration, mutual_information, dci_value;
-    integration = d.agents()[13]->entropy() + d.agents()[14]->entropy() - c.entropy();
-    mutual_information = c.entropy() + comp.entropy() - sys.entropy();
-    dci_value = integration / mutual_information;
-    cout << integration << '/' << mutual_information << '=' << dci_value << endl;
-}
-
 TEST_CASE( "Clusters", "[cluster]" ) {
     dci::system d(10, 100);
     dci::cluster c1(&d, { 1, 3, 5 });
@@ -381,6 +363,30 @@ TEST_CASE( "Cluster histograms - multilevel", "[system]") {
     for (const auto& item : c2.histogram())
         REQUIRE( item.second == 1 );
     REQUIRE( c2.entropy() == Approx(std::log2((dci::fp_type)n_samples)) );
+
+}
+
+TEST_CASE( "Cluster generation", "[cluster]" ) {
+    dci::system d(10, 100);
+    dci::cluster_generator gen(&d, 1);
+    
+    for (size_t a = 0; a != d.agents().size(); ++a)
+    {
+        REQUIRE( gen.has_next() );
+        REQUIRE( gen.next() == dci::cluster(&d, { a }) );
+    }
+
+}
+
+TEST_CASE( "Cluster generation - multilevel", "[cluster]" ) {
+    dci::system d(10, 100, 82);
+    dci::cluster_generator gen(&d, 1);
+    
+    for (size_t a = 0; a != d.agents().size(); ++a)
+    {
+        REQUIRE( gen.has_next() );
+        REQUIRE( gen.next() == dci::cluster(&d, { a }) );
+    }
 
 }
 
