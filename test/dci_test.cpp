@@ -293,9 +293,18 @@ TEST_CASE( "Real life system - arabidopsis", "[system]" ) {
     dci::system d = dci::system::load_from_file("data/arabidopsis.txt");
     REQUIRE( d.samples().size() == 5000 );
     REQUIRE( d.agents().size() == 15 );
-
+    d.compute_agent_statistics();
     for (const auto& a : d.agents())
         REQUIRE( a->size() == 1 );
+
+    dci::cluster c(&d, { 13, 14 });
+    dci::cluster comp = !c;
+    dci::cluster sys(&d, "111111111111111");
+    dci::fp_type integration, mutual_information, dci_value;
+    integration = d.agents()[13]->entropy() + d.agents()[14]->entropy() - c.entropy();
+    mutual_information = c.entropy() + comp.entropy() - sys.entropy();
+    dci_value = integration / mutual_information;
+    cout << integration << '/' << mutual_information << '=' << dci_value << endl;
 }
 
 TEST_CASE( "Clusters", "[cluster]" ) {
