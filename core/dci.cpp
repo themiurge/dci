@@ -3,7 +3,7 @@
 int main(int argc, char** argv)
 {
 
-    dci::system d = dci::system::load_from_file("data/boolean_10variables.txt");
+    dci::system d = dci::system::load_from_file("data/arabidopsis.txt");
     d.compute_agent_statistics();
     
     dci::system hs = d.generate_homogeneous_system(123456);

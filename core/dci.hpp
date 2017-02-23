@@ -942,6 +942,7 @@ namespace dci
         }
         inline void check_insert_cluster_in_queue(const cluster& c, priority_queue<cluster>& q, const size_t& num_results)
         {
+            if (isinf(c.statistical_index())) return;
             if (q.size() < num_results)
             {
                 q.push(c);
